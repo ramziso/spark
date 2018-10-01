@@ -1,0 +1,60 @@
+import torch
+
+def print_child_layers(model):
+    layer_counter = 0
+    for layer in model.children():
+        #print(" layer", layer_counter, "is -")
+        print(layer)
+        layer_counter += 1
+    return layer_counter
+
+def print_layer_parameters(model, layer_index):
+    child_list = list(model.children())
+    for parameters in child_list[layer_index].parameters():
+        #print("{}th layers current parameter : \n",parameters)
+        break
+
+def finetuning_all_layer(model, target_layers = None):
+    child_list = list(model.children())
+    child_len = len(child_list)
+    target_layers = target_layers
+    if target_layers == None:
+        target_layers = range(child_len)
+    else:
+        target_layers = range(target_layers[0], target_layers[1])
+
+    child_counter = 0
+    for child in model.children():
+        if child_counter in target_layers:
+            for param in child.parameters():
+                param.requires_grad = False
+        elif child_counter not in target_layers:
+            for param in child.parameters():
+                param.requires_grad = True
+
+        child_counter += 1
+    return model
+
+def train_last_layer(model, target_layers = None):
+    child_counter = 0
+    for child in model.children():
+        for param in child.parameters():
+            param.requires_grad = True
+        child_counter += 1
+    return model
+
+# after you froze some layers in the network, you must reset the optimizer like next:
+#optimizer = torch.optim.RMSprop(filter(lambda p: p.requires_grad, model.parameters()), lr=0.1)
+
+def save_model(model, MODEL_PATH):
+    # Let's assume we will save/load from a path MODEL_PATH
+    # Saving a Model
+    torch.save(model.state_dict(), MODEL_PATH)
+
+def load_model(model, MODEL_PATH):
+    # Loading the model.
+    # read below it's been covered below.
+    checkpoint = torch.load(MODEL_PATH)
+    model.load_state_dict(checkpoint)
+
+    return model
