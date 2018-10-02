@@ -2,11 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import types
-
-try:
-    import pretrainedmodels as models
-except:
-    "Error! There is no pretrainedmodels in your python environment."
+import pretrainedmodels as models
 
 __all__ = ["alexnet", "vgg11", "vgg11_bn", "vgg13", "vgg13_bn", "vgg16", "vgg16_bn", "vgg19_bn",
            "resnet18", "resnet34", "resnet50", "resnet101", "resnet152",
@@ -48,9 +44,6 @@ def alexnet(input_size = (3,224,224), num_classes = 1000, pretrained = None):
     model.linear1 = nn.Linear(in_features=out_feature_size, out_features = out_feature_size, bias = True)
     model.last_linear = nn.Linear(in_features=out_feature_size, out_features = num_classes, bias = True)
 
-    print(model.linear0)
-    print(model.linear1)
-    del model.features
     def features(self, input):
         x = self._features(input)
         x = x.view(x.size(0), -1)
@@ -432,6 +425,7 @@ def resnet152(input_size=(3,224,224), num_classes=1000, pretrained=None):
 def vgg11(input_size = (3,224,224), num_classes=1000, pretrained=None):
     model = models.vgg11(pretrained = pretrained)
     model = add_instances_to_torchvisionmodel(model)
+    print(model)
     if input_size != (3,224,224):
         model._features[0] = nn.Conv2d(input_size[0], 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
         model.input_size = input_size

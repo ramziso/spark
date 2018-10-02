@@ -73,11 +73,11 @@ class SerializedTrainer():
                     raise ValueError ("Input_size {} is must be {} if you use {}'s imagenet pretrained model. ".format(
                         model_info["input_size"], test_model.input_size, model_name))
             if "mean" in model_instances:
-                if model_info["input_size"] != test_model.mean:
+                if model_info["mean"] != test_model.mean:
                     raise ValueError("Mean value for normalization {} is must be {} if you use {}'s imagenet pretrained model. ".format(
                         model_info["mean"], test_model.mean, model_name))
             if "std" in model_instances:
-                if model_info["input_size"] != test_model.std:
+                if model_info["std"] != test_model.std:
                     raise ValueError("Std value for normalization {} is must be {} if you use {}'s imagenet pretrained model. ".format(
                         model_info["std"], test_model.std, model_name))
 
@@ -112,9 +112,6 @@ class SerializedTrainer():
         else:
             for target_transform in target_transforms:
                 self.test_transforms.append(target_transform)
-
-    def add_test_transform(self, transforms):
-        self.test_transforms.append(transforms)
 
     def benchmark_model(self, model, test_tensor):
         inference_time = []
@@ -177,6 +174,7 @@ class SerializedTrainer():
         return model, train_acc, train_loss
 
     def __create_dataloader(self, data_folders, data_transforms,  input_size, batch_size, mean, std, shuffle):
+        print(data_transforms)
         final_transforms = transforms.Compose(data_transforms.copy())
         final_transforms.transforms.append(transforms.Resize((input_size[1], input_size[2])))
         final_transforms.transforms.append(transforms.ToTensor())
