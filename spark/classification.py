@@ -209,8 +209,8 @@ class SerializedTrainer():
 
     def __model_cuda_selecter(self, model):
         if torch.cuda.device_count() > 1:
-            model = model.cuda()
-            #model = nn.DataParallel(model).cuda()
+            #model = model.cuda()
+            model = nn.DataParallel(model).cuda()
         elif torch.cuda.device_count() == 1 :
             model = model.cuda()
         return model
