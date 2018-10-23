@@ -5,8 +5,10 @@ import os
 import numpy as np
 from .pytorch_tools import model_handler , loss_func_handler, layer_manipulation, optimizer_handler
 from .pytorch_tools import logger
+
+from .pytorch_tools import VATLoss
+
 import time
-import codecs
 from sklearn.metrics import confusion_matrix
 
 def get_instances(cls):
@@ -62,26 +64,26 @@ class SerializedTrainer():
         model_info.setdefault("class_to_idx", self.class_to_idx)
         # Test model one time.
         test_model, _ = model_handler.create_model_object(model_info)
-        test_tensor = torch.randn(1, input_size[0],input_size[1],input_size[2])
+        test_tensor = torch.randn(1, input_size[0],input_size[1],input_size[2])   # [Batch Size, Num_Channel, img_Height, igm_Width]
         test_model.forward(test_tensor)
 
-        # Adaptation to pretrained models values. (especially you choosed to use "imagenet" pretrained models
+        # Adaptation to pretrained models values. (especially you choosed to use "imagenet" pretrained models)
         model_instances = get_instances(test_model)
         if pretrained != None and pretrained == "imagenet":
             if "input_size" in model_instances:
                 if model_info["input_size"] != test_model.input_size:
-                    raise ValueError ("Input_size {} is must be {} if you use {}'s imagenet pretrained model. ".format(
+                    raise ValueError ("Input_size {} must be {} if you use {}'s imagenet pretrained model. ".format(
                         model_info["input_size"], test_model.input_size, model_name))
             if "mean" in model_instances:
                 if model_info["mean"] != test_model.mean:
-                    raise ValueError("Mean value for normalization {} is must be {} if you use {}'s imagenet pretrained model. ".format(
+                    raise ValueError("Mean value for normalization {} must be {} if you use {}'s imagenet pretrained model. ".format(
                         model_info["mean"], test_model.mean, model_name))
             if "std" in model_instances:
                 if model_info["std"] != test_model.std:
-                    raise ValueError("Std value for normalization {} is must be {} if you use {}'s imagenet pretrained model. ".format(
+                    raise ValueError("Std value for normalization {} must be {} if you use {}'s imagenet pretrained model. ".format(
                         model_info["std"], test_model.std, model_name))
 
-        self.models.setdefault(model_name, model_info)
+        self.models.setdefault(model_name, model_info)   # key : model_name ; value : model_info
 
     def add_train_folder(self, path):
         if self.num_classes != len([folder for folder in os.listdir(path) if os.path.isdir(os.path.join(path, folder))]):
@@ -125,7 +127,7 @@ class SerializedTrainer():
         return inference_avg, inference_std
 
     def benchmark_all(self):
-        print("Benchmark for all registered model Start.")
+        print("Benchmark for all registered model Starts.")
         benchmark_cpu = {}
         benchmark_gpu = {}
         for model_name in sorted(self.models.keys()):
@@ -153,12 +155,16 @@ class SerializedTrainer():
         train_correct = 0.0
         train_img = 0.0
         train_loss = 0.0
+
         for img, label in train_loader:
             img, label = img.cuda(), label.cuda()
             optimizer.zero_grad()
             img.requires_grad = True
             output = model.forward(img)
-            loss = loss_func(output, label)
+
+            vat_loss = VATLoss(xi=10.0, eps=1.0, ip=1)
+            lds = vat_loss(model, img)
+            loss = loss_func(output, label) + 1.0 * lds # VAT Loss training
             loss.backward()
             optimizer.step()
             probability, predict = torch.max(output, 1)
@@ -287,13 +293,13 @@ class SerializedTrainer():
             print(result_excel_log)
             logger.log_excel(excel_path, [("{}_result".format(model_name),result_excel_log)])
 
-            torch.save(model.state_dict(), os.path.join(model_save_path, "epoch_{}.pth".format(epoch)))
+            model_handler.save_checkpoint(model, os.path.join(model_save_path, "epoch_{}.pth".format(epoch)))
 
             if best_acc < test_acc:
-                torch.save(model.state_dict(), os.path.join(best_model_save_path, "best_acc_model.pth".format(epoch)))
+                model_handler.save_checkpoint(model, os.path.join(best_model_save_path, "best_acc_model.pth".format(epoch)))
                 best_acc = test_acc
             if best_loss > test_loss:
-                torch.save(model.state_dict(), os.path.join(best_model_save_path, "best_loss_model.pth".format(epoch)))
+                model_handler.save_checkpoint(model, os.path.join(best_model_save_path, "best_loss_model.pth".format(epoch)))
                 best_loss = test_loss
 
         return model, epoch_train_acc_list, epoch_test_loss_list, epoch_test_acc_list, epoch_test_loss_list
@@ -327,6 +333,65 @@ class SerializedTrainer():
                                "epoch", "train_acc", "train_acc_comparison", results_epoch_train_acc)
         logger.plot_graph_save(os.path.join(self.log_folder, "train_loss_comparison.png"),
                                "epoch", "train_loss", "train_loss_comparison", results_epoch_train_loss)
+
+    def draw_activation_maps(self, model, dataset_loader, logits_save_path):
+        """
+
+        :param model:
+        :param dataset_loader:
+        :param logits_save_path:
+        :return:
+        """
+        features_blob = []
+        def get_activation_state(self, input, output):
+            return features_blob.append(output.detach().data.cpu().numpy())
+
+        def returnCAM(feature_conv, weight_softmax, class_idx):
+            # generate the class activation maps upsample to identical to input_img_size
+            size_upsample = (256, 256)
+            bz, nc, h, w = feature_conv.shape
+            output_cam = []
+            for idx in class_idx:
+                cam = weight_softmax[idx].dot(feature_conv.reshape((nc, h*w)))
+                cam = cam.reshape(h, w)
+                cam = cam - np.min(cam)
+                cam_img = cam / np.max(cam)
+                cam_img = np.uint8(255*cam_img)
+                yield cam_img
+
+        # check the model is adapted to Activation maps by checking the second-last layer type.
+        children_list = reversed([children for children in model.children()])
+        for children in children_list:
+            if isinstance(children, torch.nn.modules.pooling.AvgPool2d) or isinstance(children, torch.nn.modules.pooling.AdaptiveAvgPool2d):
+                children.register_forward_hook(get_activation_state)
+                break
+        else:
+            print("model {} architecture cannot draw the activation map.")
+            pass
+
+        # extract all of the prediction from all of the data.
+        # If the dataset containes too many classes,
+        # It selects only 100 classes from entire dataset.
+        model.eval()
+        params = list(model.parameters())
+        weight_softmax = np.sqeeze(params[-2].detach().data.numpy())
+
+        best_img_path , worst_img_path= [[] for x in range(100) ], [[] for x in range(100)]
+
+        logits_array = None
+        labels_array = None
+        path_array = None
+        for path, img, label in dataset_loader:
+            if torch.cuda.is_available():
+                img, label = img.cuda(), label.cuda()
+            img.requires_grad = False
+            label.requires_grad = False
+            batch_logits = model(img)
+
+
+
+            if label.cpu().data[0] >= 100:
+                break
 
     def extract_features_logits(self, model, dataset_loader, logits_save_path):
         init = False
@@ -364,15 +429,15 @@ class SerializedTrainer():
         if len(self.class_to_idx) <= 20:
             logger.plot_confusion_matrix(cm, self.class_to_idx, logits_save_path, normalize=True,
                                       title='Normalized confusion matrix')
+            logger.plot_confusion_matrix(cm, self.class_to_idx)
 
     def features_logits_from_each_models(self):
         for model_name in self.models.keys():
             model_info = self.models[model_name]
             checkpoint_path = os.path.join(self.log_folder, model_info["model_name"], "best_model",
                                             "best_acc_model.pth")
-            checkpoint = torch.load(checkpoint_path, map_location="cpu")
             model, _ = model_handler.create_model_object(model_info)
-            model.load_state_dict(checkpoint)
+            model_handler.load_checkpoint(model, checkpoint_path)
             model = self.__model_cuda_selecter(model)
             model.eval()
 
@@ -389,3 +454,4 @@ class SerializedTrainer():
 
             self.extract_features_logits(model, train_loader, logits_save_path=train_logits_save_path)
             self.extract_features_logits(model, test_loader, logits_save_path=test_logits_save_path)
+

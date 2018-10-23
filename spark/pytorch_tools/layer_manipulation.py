@@ -45,16 +45,3 @@ def train_last_layer(model, target_layers = None):
 
 # after you froze some layers in the network, you must reset the optimizer like next:
 #optimizer = torch.optim.RMSprop(filter(lambda p: p.requires_grad, model.parameters()), lr=0.1)
-
-def save_model(model, MODEL_PATH):
-    # Let's assume we will save/load from a path MODEL_PATH
-    # Saving a Model
-    torch.save(model.state_dict(), MODEL_PATH)
-
-def load_model(model, MODEL_PATH):
-    # Loading the model.
-    # read below it's been covered below.
-    checkpoint = torch.load(MODEL_PATH)
-    model.load_state_dict(checkpoint)
-
-    return model
