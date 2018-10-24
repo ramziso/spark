@@ -62,7 +62,7 @@ class SerializedTrainer():
         model_info.setdefault("std", std)
         model_info.setdefault("num_classes", self.num_classes)
         model_info.setdefault("class_to_idx", self.class_to_idx)
-        # Test model one time.
+        # Test model one time. Create model object based on model info
         test_model, _ = model_handler.create_model_object(model_info)
         test_tensor = torch.randn(1, input_size[0],input_size[1],input_size[2])   # [Batch Size, Num_Channel, img_Height, igm_Width]
         test_model.forward(test_tensor)
@@ -231,6 +231,7 @@ class SerializedTrainer():
 
         model = self.__model_cuda_selecter(model)
 
+        # If you want to use pre-trained model, and train the last layer, set the "train_last_layer" as True
         if model_info["train_last_layer"] :
             model = layer_manipulation.train_last_layer(model)
 
@@ -404,8 +405,15 @@ class SerializedTrainer():
                 img, label = img.cuda(), label.cuda()
             img.requires_grad = False
             label.requires_grad = False
-            batch_features = model.features(img)
-            batch_logits = model.logits(batch_features)
+
+            # check the model is Dataparallel object or not.
+            if isinstance(model, (torch.nn.parallel.DataParallel)):
+                batch_features = model.module.features(img)
+                batch_logits = model.module.logits(batch_features)
+            else:
+                batch_features = model.features(img)
+                batch_logits = model.logits(batch_features)
+
 
             batch_features = batch_features.view(batch_features.shape[0], -1)
             label = label.view(label.shape[0], -1)
@@ -438,6 +446,7 @@ class SerializedTrainer():
                                             "best_acc_model.pth")
             model, _ = model_handler.create_model_object(model_info)
             model_handler.load_checkpoint(model, checkpoint_path)
+
             model = self.__model_cuda_selecter(model)
             model.eval()
 

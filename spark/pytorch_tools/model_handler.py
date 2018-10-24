@@ -29,7 +29,7 @@ def save_checkpoint(model, checkpoint):
     """
     target_model = model
     # Check the model is the Dataparallel model or not
-    if isinstance(model, (type(torch.nn.DataParallel))):
+    if isinstance(model, (torch.nn.parallel.DataParallel)):
         target_model = model.module
     torch.save(target_model.state_dict(), checkpoint)
     pass
