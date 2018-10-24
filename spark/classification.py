@@ -5,8 +5,7 @@ import os
 import numpy as np
 from .pytorch_tools import model_handler , loss_func_handler, layer_manipulation, optimizer_handler
 from .pytorch_tools import logger
-
-from .pytorch_tools import VATLoss
+from .adversarialtraining import VATLoss
 
 import time
 from sklearn.metrics import confusion_matrix
@@ -165,6 +164,7 @@ class SerializedTrainer():
             vat_loss = VATLoss(xi=10.0, eps=1.0, ip=1)
             lds = vat_loss(model, img)
             loss = loss_func(output, label) + 1.0 * lds # VAT Loss training
+
             loss.backward()
             optimizer.step()
             probability, predict = torch.max(output, 1)

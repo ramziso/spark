@@ -1,5 +1,4 @@
 import torch
-#import architectures
 
 def create_model_object(model_info):
     if model_info["pretrained"] == "imagenet":
@@ -43,13 +42,16 @@ def load_checkpoint(model, checkpoint, perfect_match = False):
     checkpoint = torch.load(checkpoint,  map_location="cpu")
 
     # Check the checkpoint object is Dataparallel module or not
-    checkpoint_keys = sorted([key for key in checkpoint.keys()])
+    checkpoint_keys = [key for key in checkpoint.keys()]
 
     if "module" == checkpoint_keys[0][:6]:
         # If Dataparallel module use,
         # the model architecture and weights are registered as
         # "module" instance of the Dataparalle module.
+        print("{} is save as torch.nn.Dataparallel module. ")
         for key in checkpoint_keys:
             checkpoint[key[7:]] = checkpoint.pop(key)
+
     model.load_state_dict(checkpoint)
+
     return model
