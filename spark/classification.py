@@ -40,6 +40,20 @@ class SerializedTrainer():
         if os.path.exists(self.log_folder) == False:
             os.mkdir(self.log_folder)
 
+        print("spark classification model initialized.")
+        print(self)
+
+    def __str__(self):
+        return "(Classification Serialized Training)\n" + \
+               "\t(train folder) : \n{} ".format("".join([" "*12 + folder + "\t\t\n" for folder in self.test_folder]))+ \
+               "\t(test folder) : \n{}".format("".join([" "*12 + folder + "\t\t\n" for folder in self.test_folder]))+ \
+               "\t(num_classes) : {} \n".format(self.num_classes)+ \
+               "\t(train_transforms) : \n{} ".format("".join([" "*12 + str(transforms) + "\n" for transforms in self.train_transforms]))+ \
+               "\t(test_transforms) : {} \n".format("".join([" "*12 + str(transforms) + "\n"  for transforms in self.test_transforms]))+ \
+               "\t(class_to_idx) : {} \n".format(self.class_to_idx)+ \
+               "\t(registered models) : {} \n".format(self.models)+ \
+               "\t(cuda devices) : {} \n".format(self.cuda_devices)
+
     def add_model(self, model_name, model_object=None, input_size = None, pretrained = None,
                   train_last_layer = False, max_epoch = 50, batch_size = 16, lr = 0.001, optimizer = "Adam", loss_func = "CrossEntropyLoss",
                   mean = [0.5,0.5,0.5], std = [0.5, 0.5, 0.5]):
@@ -89,6 +103,7 @@ class SerializedTrainer():
             raise ValueError("{} contains different number of class to former registered train dataset {}".format(path, self.train_folder))
         else:
             self.train_folder.append(path)
+            print
 
     def add_test_folder(self, path):
         if self.num_classes != len([folder for folder in os.listdir(path) if os.path.isdir(os.path.join(path, folder))]):
@@ -156,7 +171,8 @@ class SerializedTrainer():
         train_loss = 0.0
 
         for img, label in train_loader:
-            img, label = img.cuda(), label.cuda()
+            if torch.cuda.is_available():
+                img, label = img.cuda(), label.cuda()
             optimizer.zero_grad()
             img.requires_grad = True
             output = model.forward(img)
@@ -179,16 +195,25 @@ class SerializedTrainer():
         print("EPOCH [{}] TRAIN RESULT : ACC [{:.5}] LOSS [{:.5}]".format(epoch, train_acc, train_loss))
         return model, train_acc, train_loss
 
-    def __create_dataloader(self, data_folders, data_transforms,  input_size, batch_size, mean, std, shuffle):
-        print(data_transforms)
+    def __create_dataloader(self, data_folders, data_transforms,  input_size, batch_size, mean, std, shuffle, with_path = False):
         final_transforms = transforms.Compose(data_transforms.copy())
         final_transforms.transforms.append(transforms.Resize((input_size[1], input_size[2])))
         final_transforms.transforms.append(transforms.ToTensor())
         final_transforms.transforms.append(transforms.Normalize(mean, std))
 
-        final_folder = [datasets.ImageFolder(folder, final_transforms) for folder in data_folders]
+        if with_path == False:
+            final_folder = [datasets.ImageFolder(folder, final_transforms) for folder in data_folders]
+        else:
+            from .dataloader import ImageFolderWithPaths
+            final_folder = [ImageFolderWithPaths(folder, final_transforms) for folder in data_folders]
         final_folder = torch.utils.data.ConcatDataset(final_folder)
-        final_folder = torch.utils.data.DataLoader(final_folder, batch_size=batch_size,
+
+        if with_path == False:
+            final_folder = torch.utils.data.DataLoader(final_folder, batch_size=batch_size,
+                                                   shuffle=shuffle, num_workers=self.dataloader_worker)
+        else:
+            # current version of the ImageFolderWithPaths can only be used with bach_size 1.
+            final_folder = torch.utils.data.DataLoader(final_folder, batch_size=1,
                                                    shuffle=shuffle, num_workers=self.dataloader_worker)
         return final_folder
 
@@ -198,7 +223,8 @@ class SerializedTrainer():
         test_img = 0.0
         test_loss = 0.0
         for img, label in test_loader:
-            img, label = img.cuda(), label.cuda()
+            if torch.cuda.is_available():
+                img, label = img.cuda(), label.cuda()
             img.requires_grad = False
             output = model.forward(img)
             loss = loss_func(output, label)
@@ -399,8 +425,9 @@ class SerializedTrainer():
         features_array = None
         logits_array = None
         labels_array = None
+        path_list = []
 
-        for img, label in dataset_loader:
+        for img, label, path in dataset_loader:
             if torch.cuda.is_available():
                 img, label = img.cuda(), label.cuda()
             img.requires_grad = False
@@ -428,8 +455,10 @@ class SerializedTrainer():
                 logits_array = np.concatenate((logits_array, batch_logits.detach().cpu().numpy()))
                 labels_array = np.concatenate((labels_array, label.detach().cpu().numpy()))
 
-        logger.features_to_excel(features_array, labels_array, logits_save_path)
-        logger.logit_to_excel(logits_array, labels_array, logits_save_path)
+            path_list.append(path[0])
+
+        logger.features_to_excel(path_list, features_array, labels_array, logits_save_path)
+        logger.logit_to_excel(path_list, logits_array, labels_array, logits_save_path)
 
         cm = confusion_matrix(np.argmax(logits_array, axis=1), labels_array)
         logger.cm_to_excel(cm, self.class_to_idx ,logits_save_path)
@@ -437,7 +466,6 @@ class SerializedTrainer():
         if len(self.class_to_idx) <= 20:
             logger.plot_confusion_matrix(cm, self.class_to_idx, logits_save_path, normalize=True,
                                       title='Normalized confusion matrix')
-            logger.plot_confusion_matrix(cm, self.class_to_idx)
 
     def features_logits_from_each_models(self):
         for model_name in self.models.keys():
@@ -457,9 +485,9 @@ class SerializedTrainer():
             os.makedirs(test_logits_save_path, exist_ok = True)
 
             train_loader = self.__create_dataloader(self.train_folder, self.test_transforms, model_info["input_size"],
-                                                      model_info["batch_size"], model_info["mean"], model_info["std"], shuffle=False)
+                                                      model_info["batch_size"], model_info["mean"], model_info["std"], shuffle=False, with_path=True)
             test_loader = self.__create_dataloader(self.test_folder, self.test_transforms, model_info["input_size"],
-                                                    model_info["batch_size"], model_info["mean"], model_info["std"], shuffle=False)
+                                                    model_info["batch_size"], model_info["mean"], model_info["std"], shuffle=False, with_path=True)
 
             self.extract_features_logits(model, train_loader, logits_save_path=train_logits_save_path)
             self.extract_features_logits(model, test_loader, logits_save_path=test_logits_save_path)

@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import itertools
 import pandas as pd
 import codecs
+import torch
 
 def log_excel(excel_path, args):
     excel_writer = pd.ExcelWriter(excel_path)
@@ -31,18 +32,20 @@ def plot_graph_save(save_path, x_label, y_label, title, dict_data):
     plt.savefig(save_path)
     plt.close()
 
-def logit_to_excel(logits, label, file_path):
+def logit_to_excel(paths, logits, label, file_path):
+    paths_excel = pd.DataFrame(paths, columns=["file_path"])
     logits_excel = pd.DataFrame(logits,
                                 columns=["class_{}_logit".format(x) for x in range(logits.shape[1])])
     labels = pd.DataFrame(label, columns=["label"])
-    all = pd.concat([logits_excel, labels], axis=1)
+    all = pd.concat([paths_excel, logits_excel, labels], axis=1)
     all.to_csv(os.path.join(file_path, "extracted_logits.csv"))
 
-def features_to_excel(features, label, file_path):
+def features_to_excel(paths, features, label, file_path):
+    paths_excel = pd.DataFrame(paths,columns=["file_path"])
     features_excel = pd.DataFrame(features,
                                 columns=["{}th_feat".format(x) for x in range(features.shape[1])])
     labels = pd.DataFrame(label, columns=["label"])
-    all = pd.concat([features_excel, labels], axis=1)
+    all = pd.concat([paths_excel, features_excel, labels], axis=1)
     all.to_csv(os.path.join(file_path, "extracted_features.csv"))
 
 def cm_to_excel(cm, class_label, file_path):
@@ -77,3 +80,5 @@ def plot_confusion_matrix(cm, classes,file_path,
     plt.savefig(os.path.join(file_path, "confusion_matrix.png"), dpi=300)
     plt.close()
 
+def weight_histogram(model):
+    model.parameters()
