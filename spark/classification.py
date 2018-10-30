@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
-from torchvision import datasets, utils, transforms
+from torchvision import datasets, transforms, utils
 import os
 import numpy as np
 from .pytorch_tools import model_handler , loss_func_handler, layer_manipulation, optimizer_handler
-from .pytorch_tools import logger
+from .logger import logger
 from .adversarialtraining import VATLoss
 
 import time
@@ -40,11 +40,11 @@ class SerializedTrainer():
         if os.path.exists(self.log_folder) == False:
             os.mkdir(self.log_folder)
 
-        print("spark classification model initialized.")
+        print("spark SerializedTrainer initialized.")
         print(self)
 
     def __str__(self):
-        return "(Classification Serialized Training)\n" + \
+        return "Classification Serialized Training\n" + \
                "\t(train folder) : \n{} ".format("".join([" "*12 + folder + "\t\t\n" for folder in self.test_folder]))+ \
                "\t(test folder) : \n{}".format("".join([" "*12 + folder + "\t\t\n" for folder in self.test_folder]))+ \
                "\t(num_classes) : {} \n".format(self.num_classes)+ \
@@ -53,6 +53,13 @@ class SerializedTrainer():
                "\t(class_to_idx) : {} \n".format(self.class_to_idx)+ \
                "\t(registered models) : {} \n".format(self.models)+ \
                "\t(cuda devices) : {} \n".format(self.cuda_devices)
+
+    def model_summary(self, model_info):
+        print_row = ("model_name", "input_size", "pretrained",
+                     "train_last_layer", "max_epoch", "batch_size",
+                     "lr", "optimizer", "loss_func", "mean", "std",
+                     "num_classes", "class_to_idx")
+        return "\n\t".join([ "(" + info + ")" + " : "+ str(model_info[info]) for info in print_row])
 
     def add_model(self, model_name, model_object=None, input_size = None, pretrained = None,
                   train_last_layer = False, max_epoch = 50, batch_size = 16, lr = 0.001, optimizer = "Adam", loss_func = "CrossEntropyLoss",
@@ -70,7 +77,6 @@ class SerializedTrainer():
         model_info.setdefault("lr", lr)
         model_info.setdefault("optimizer", optimizer)
         model_info.setdefault("loss_func", loss_func)
-        model_info.setdefault("model_object", None)
         model_info.setdefault("mean", mean)
         model_info.setdefault("std", std)
         model_info.setdefault("num_classes", self.num_classes)
@@ -97,6 +103,7 @@ class SerializedTrainer():
                         model_info["std"], test_model.std, model_name))
 
         self.models.setdefault(model_name, model_info)   # key : model_name ; value : model_info
+        print(self.model_summary(model_info))
 
     def add_train_folder(self, path):
         if self.num_classes != len([folder for folder in os.listdir(path) if os.path.isdir(os.path.join(path, folder))]):
@@ -239,23 +246,22 @@ class SerializedTrainer():
         print("EPOCH [{}] TEST RESULT : ACC [{:.5}] LOSS [{:.5}]".format(epoch, test_acc, test_loss))
         return test_acc, test_loss
 
-    def __model_cuda_selecter(self, model):
+    def model_cuda_selecter(self, model):
         if torch.cuda.device_count() > 1:
-            #model = model.cuda()
             model = nn.DataParallel(model).cuda()
         elif torch.cuda.device_count() == 1 :
             model = model.cuda()
         return model
 
-    def __tensor_cuda_selecter(self, tensor, device):
+    def tensor_cuda_selecter(self, tensor, device):
         return tensor.to(device)
 
     def train_test_model(self, model_info):
         model_name = model_info["model_name"]
-        print("Current model : " , model_name, "\nModel setting : ", model_info)
+        print("[Current model] : " , model_name, "\nModel setting : ", model_info)
         model, model_info = model_handler.create_model_object(model_info)
 
-        model = self.__model_cuda_selecter(model)
+        model = self.model_cuda_selecter(model)
 
         # If you want to use pre-trained model, and train the last layer, set the "train_last_layer" as True
         if model_info["train_last_layer"] :
@@ -318,7 +324,7 @@ class SerializedTrainer():
             text_log = "\t".join(text_log)
             logger.log_txt(txt_path, text_log)
             print(result_excel_log)
-            logger.log_excel(excel_path, [("{}_result".format(model_name),result_excel_log)])
+            logger.log_excel(excel_path, [("{}_result".format(model_name), result_excel_log)])
 
             model_handler.save_checkpoint(model, os.path.join(model_save_path, "epoch_{}.pth".format(epoch)))
 
@@ -425,6 +431,7 @@ class SerializedTrainer():
         features_array = None
         logits_array = None
         labels_array = None
+        predicts_array = None
         path_list = []
 
         for img, label, path in dataset_loader:
@@ -441,31 +448,68 @@ class SerializedTrainer():
                 batch_features = model.features(img)
                 batch_logits = model.logits(batch_features)
 
-
             batch_features = batch_features.view(batch_features.shape[0], -1)
             label = label.view(label.shape[0], -1)
+            probability, predict = torch.max(batch_logits, 1)
 
             if init == False:
                 features_array = batch_features.detach().cpu().numpy()
                 logits_array = batch_logits.detach().cpu().numpy()
                 labels_array = label.detach().cpu().numpy()
+                predicts_array = predict.detach().cpu().numpy()
                 init = True
             else:
                 features_array = np.concatenate((features_array, batch_features.detach().cpu().numpy()))
                 logits_array = np.concatenate((logits_array, batch_logits.detach().cpu().numpy()))
                 labels_array = np.concatenate((labels_array, label.detach().cpu().numpy()))
+                predicts_array = np.concatenate((predicts_array, predict.detach().cpu().numpy()))
 
             path_list.append(path[0])
 
         logger.features_to_excel(path_list, features_array, labels_array, logits_save_path)
         logger.logit_to_excel(path_list, logits_array, labels_array, logits_save_path)
 
-        cm = confusion_matrix(np.argmax(logits_array, axis=1), labels_array)
-        logger.cm_to_excel(cm, self.class_to_idx ,logits_save_path)
+        cm = confusion_matrix(predicts_array, labels_array)
+0        logger.cm_to_excel(cm, self.class_to_idx, logits_save_path)
+
+        for idx, top_list, bottom_list in self.sample_top_bottom_data(path_list, logits_array, labels_array):
+            from PIL import Image
+            #top_list = utils.make_grid(top_list, nrow=len(top_list))
+            #bottom_list = utils.make_grid(bottom_list, nrow=len(bottom_list))
+
+            top_list_img = [np.array(Image.open(img).resize((256,256))) for img in top_list]
+            bottom_list_img = [np.array(Image.open(img).resize((256,256))) for img in bottom_list]
+            top_list = [logger.path_leaf(file_path) for file_path in top_list]
+            bottom_list = [logger.path_leaf(file_path) for file_path in bottom_list]
+            logger.gridimages(os.path.join(logits_save_path, "top-5 Accurate Images"), top_list_img, cols=1, subtitles=top_list, title=idx)
+            logger.gridimages(os.path.join(logits_save_path, "top-5 Accurate Images"), bottom_list_img, cols=1, subtitles=bottom_list, title=idx)
 
         if len(self.class_to_idx) <= 20:
             logger.plot_confusion_matrix(cm, self.class_to_idx, logits_save_path, normalize=True,
-                                      title='Normalized confusion matrix')
+                                         title='Normalized confusion matrix')
+
+    def sample_top_bottom_data(self, paths, logits, label, sample_num = 5):
+        import pandas as pd
+        paths = pd.DataFrame(paths, index= label.reshape(1,-1)[0].tolist(), columns=["file_path"])
+        logits = pd.DataFrame(logits, index= label.reshape(1,-1)[0].tolist(),
+                                    columns=[x for x in range(logits.shape[1])])
+        all = pd.concat([logits, paths], axis=1)
+        for idx in range(len(self.class_to_idx)):
+            only_one_class = all.loc[idx, :]
+            only_one_class = only_one_class.sort_values(by = idx, axis= 0, ascending=False)
+            top_n = only_one_class.iloc[:sample_num, -1]
+            bottom_n = only_one_class.iloc[-sample_num:, -1]
+            yield self.class_to_idx[idx], top_n.tolist(), bottom_n.tolist()
+
+    def analyze_models(self):
+        # Draw Weight Histogram on Model
+        for model_name in self.models.keys():
+            model_info = self.models[model_name]
+            checkpoint_path = os.path.join(self.log_folder, model_info["model_name"], "best_model",
+                                           "best_acc_model.pth")
+            model, _ = model_handler.create_model_object(model_info)
+            model_handler.load_checkpoint(model, checkpoint_path)
+            logger.draw_weight_histogram(model, os.path.join(self.log_folder, model_info["model_name"]))
 
     def features_logits_from_each_models(self):
         for model_name in self.models.keys():
@@ -475,7 +519,7 @@ class SerializedTrainer():
             model, _ = model_handler.create_model_object(model_info)
             model_handler.load_checkpoint(model, checkpoint_path)
 
-            model = self.__model_cuda_selecter(model)
+            model = self.model_cuda_selecter(model)
             model.eval()
 
             train_logits_save_path = os.path.join(self.log_folder, model_info["model_name"], "logits_train")
@@ -491,4 +535,3 @@ class SerializedTrainer():
 
             self.extract_features_logits(model, train_loader, logits_save_path=train_logits_save_path)
             self.extract_features_logits(model, test_loader, logits_save_path=test_logits_save_path)
-
