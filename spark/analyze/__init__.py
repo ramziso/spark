@@ -1,2 +1,2 @@
-from .activationmap import ActivationMap
-from .weight_histogram import WeightHistogram, trainable_parameters
+from .activationmap import *
+from .weight_histogram import *

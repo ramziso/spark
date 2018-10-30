@@ -1,5 +1,7 @@
 import torch
 
+__all__ = ["create_loss_func"]
+
 def create_loss_func(loss_func_name = "CrossEntropyLoss", class_imbalance = None):
     if loss_func_name == "NLLLoss":
         loss_func = torch.nn.NLLLoss()

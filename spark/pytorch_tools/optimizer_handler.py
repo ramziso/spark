@@ -1,5 +1,7 @@
 import torch
 
+__all__ = ["create_optimizer"]
+
 def create_optimizer(model, learning_rate, optimizer_name):
     if optimizer_name == "Adagrad":
         optimizer = torch.optim.Adagrad(model.parameters(), lr=learning_rate)

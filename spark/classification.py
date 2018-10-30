@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torchvision import datasets, transforms, utils
 import os
 import numpy as np
-from .pytorch_tools import model_handler , loss_func_handler, layer_manipulation, optimizer_handler
+from .pytorch_tools import model_handler, loss_func_handler, layer_manipulation, optimizer_handler
 from .logger import logger
 from .adversarialtraining import VATLoss
 
@@ -25,7 +26,7 @@ def lists_classes(path):
 
 class SerializedTrainer():
     def __init__(self, train_folder, test_folder, log_folder, train_transforms = [],
-                 test_transforms = [], dataloader_worker = 0, cuda_devices = 0):
+                 test_transforms = [], dataloader_worker = 0, cuda_devices = 0, use_visdom = False):
         self.models = {}
         self.log_folder = log_folder
         self.train_folder = [train_folder]
@@ -254,7 +255,7 @@ class SerializedTrainer():
         return model
 
     def tensor_cuda_selecter(self, tensor, device):
-        return tensor.to(device)
+        return tensor.to(self.cuda_devices)
 
     def train_test_model(self, model_info):
         model_name = model_info["model_name"]
@@ -432,6 +433,7 @@ class SerializedTrainer():
         logits_array = None
         labels_array = None
         predicts_array = None
+        probs_array = None
         path_list = []
 
         for img, label, path in dataset_loader:
@@ -450,39 +452,50 @@ class SerializedTrainer():
 
             batch_features = batch_features.view(batch_features.shape[0], -1)
             label = label.view(label.shape[0], -1)
-            probability, predict = torch.max(batch_logits, 1)
+            _, predict = torch.max(batch_logits, 1)
+
+            batch_prob = F.softmax(batch_logits)
 
             if init == False:
                 features_array = batch_features.detach().cpu().numpy()
                 logits_array = batch_logits.detach().cpu().numpy()
                 labels_array = label.detach().cpu().numpy()
                 predicts_array = predict.detach().cpu().numpy()
+                probs_array = batch_prob.detach().cpu().numpy()
                 init = True
             else:
                 features_array = np.concatenate((features_array, batch_features.detach().cpu().numpy()))
                 logits_array = np.concatenate((logits_array, batch_logits.detach().cpu().numpy()))
                 labels_array = np.concatenate((labels_array, label.detach().cpu().numpy()))
                 predicts_array = np.concatenate((predicts_array, predict.detach().cpu().numpy()))
+                probs_array = np.concatenate((probs_array, batch_prob.detach().cpu().numpy()))
 
             path_list.append(path[0])
 
         logger.features_to_excel(path_list, features_array, labels_array, logits_save_path)
         logger.logit_to_excel(path_list, logits_array, labels_array, logits_save_path)
 
-        cm = confusion_matrix(predicts_array, labels_array)
-0        logger.cm_to_excel(cm, self.class_to_idx, logits_save_path)
 
-        for idx, top_list, bottom_list in self.sample_top_bottom_data(path_list, logits_array, labels_array):
+
+        cm = confusion_matrix(predicts_array, labels_array)
+        logger.cm_to_excel(cm, self.class_to_idx, logits_save_path)
+
+        # List up the top 5 and top 5 images that most good top1 prediction and worst 5 prediction on every classes.
+        # If the Classes number is too many, It will ignore the above 10th classes.
+        for idx, top_list, bottom_list, top_list_prob, bottom_list_prob in self.sample_top_bottom_data(path_list, probs_array, labels_array):
             from PIL import Image
             #top_list = utils.make_grid(top_list, nrow=len(top_list))
             #bottom_list = utils.make_grid(bottom_list, nrow=len(bottom_list))
 
             top_list_img = [np.array(Image.open(img).resize((256,256))) for img in top_list]
             bottom_list_img = [np.array(Image.open(img).resize((256,256))) for img in bottom_list]
-            top_list = [logger.path_leaf(file_path) for file_path in top_list]
-            bottom_list = [logger.path_leaf(file_path) for file_path in bottom_list]
-            logger.gridimages(os.path.join(logits_save_path, "top-5 Accurate Images"), top_list_img, cols=1, subtitles=top_list, title=idx)
-            logger.gridimages(os.path.join(logits_save_path, "top-5 Accurate Images"), bottom_list_img, cols=1, subtitles=bottom_list, title=idx)
+
+            top_list = [logger.path_leaf(file_path) + "\n"+ "prediction : " + str(prob)[:5] for file_path, prob in zip(top_list, top_list_prob )]
+            bottom_list = [logger.path_leaf(file_path) + "prediction : " + str(prob)[:5] for file_path, prob in zip(bottom_list, bottom_list_prob)]
+
+            logger.gridimages(os.path.join(logits_save_path, "top-5AccImages_{}.png".format(idx)), top_list_img, cols=1, subtitles=top_list, title=idx + "Classification result")
+            logger.gridimages(os.path.join(logits_save_path, "worst-5AccImages_{}.png".format(idx)), bottom_list_img, cols=1, subtitles=bottom_list, title=idx + "Classification result")
+
 
         if len(self.class_to_idx) <= 20:
             logger.plot_confusion_matrix(cm, self.class_to_idx, logits_save_path, normalize=True,
@@ -498,8 +511,10 @@ class SerializedTrainer():
             only_one_class = all.loc[idx, :]
             only_one_class = only_one_class.sort_values(by = idx, axis= 0, ascending=False)
             top_n = only_one_class.iloc[:sample_num, -1]
+            top_n_prob = only_one_class.iloc[:sample_num, idx]
             bottom_n = only_one_class.iloc[-sample_num:, -1]
-            yield self.class_to_idx[idx], top_n.tolist(), bottom_n.tolist()
+            bottom_n_prob = only_one_class.iloc[-sample_num:, idx]
+            yield self.class_to_idx[idx], top_n.tolist(), bottom_n.tolist(), top_n_prob.tolist(), bottom_n_prob.tolist()
 
     def analyze_models(self):
         # Draw Weight Histogram on Model

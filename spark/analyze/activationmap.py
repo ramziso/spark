@@ -1,9 +1,9 @@
 import torch
 import numpy as np
 
-__all__ = "ActivationMap"
+__all__ = ["ActivationMap"]
 
-def __check_architecture(model):
+def check_architecture(model):
     layers = reversed([layer for layer in model.children()])[:2]
     for layer in layers:
         if isinstance(layer, (torch.nn.AdaptiveAvgPool1d, torch.nn.AvgPool1d)):
@@ -19,7 +19,7 @@ class ActivationMap():
     def __init__(self, model, transforms, input_size = (3,224,224), dim=2):
         self.dimension = dim
         self.input_size = input_size
-        self.target_layer = __check_architecture(model)
+        self.target_layer = check_architecture(model)
         if self.target_layer != None:
             self.target_layer.register_forward_hook(self.get_activation_state())
         else:
