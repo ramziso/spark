@@ -3,10 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import datasets, transforms, utils
 import os
+from collections import OrderedDict
 import numpy as np
-from .pytorch_tools import model_handler, loss_func_handler, layer_manipulation, optimizer_handler
+from .pytorch_tools import model_handler, loss_func_handler, layer_manipulation, optimizer_handler, scheduler_handler
 from .logger import logger
 from .adversarialtraining import VATLoss
+from .analyze import ActivationMap
 
 import time
 from sklearn.metrics import confusion_matrix
@@ -18,8 +20,6 @@ def get_instances(cls):
         if instance is not None:
             refs.append(ref)
             yield instance
-    # print(len(refs))
-    cls.__refs__[cls] = refs
 
 def lists_classes(path):
     return sorted([x for x in os.listdir(path) if os.path.isdir(os.path.join(path, x))])
@@ -64,10 +64,11 @@ class SerializedTrainer():
 
     def add_model(self, model_name, model_object=None, input_size = None, pretrained = None,
                   train_last_layer = False, max_epoch = 50, batch_size = 16, lr = 0.001, optimizer = "Adam", loss_func = "CrossEntropyLoss",
+                  learning_scheduler = None,
                   mean = [0.5,0.5,0.5], std = [0.5, 0.5, 0.5]):
         # Add model registered in pretrained models.
         # Pytorch model object is not defined in this case.
-        model_info = {}
+        model_info = OrderedDict({})
         model_info.setdefault("model_name", model_name)
         model_info.setdefault("model_constructer", model_object)
         model_info.setdefault("input_size", input_size)
@@ -76,19 +77,46 @@ class SerializedTrainer():
         model_info.setdefault("max_epoch", max_epoch)
         model_info.setdefault("batch_size", batch_size)
         model_info.setdefault("lr", lr)
+        model_info.setdefault("learning_scheduler", learning_scheduler)
         model_info.setdefault("optimizer", optimizer)
         model_info.setdefault("loss_func", loss_func)
         model_info.setdefault("mean", mean)
         model_info.setdefault("std", std)
         model_info.setdefault("num_classes", self.num_classes)
         model_info.setdefault("class_to_idx", self.class_to_idx)
+
         # Test model one time. Create model object based on model info
         test_model, _ = model_handler.create_model_object(model_info)
         test_tensor = torch.randn(1, input_size[0],input_size[1],input_size[2])   # [Batch Size, Num_Channel, img_Height, igm_Width]
-        test_model.forward(test_tensor)
 
+        if pretrained != None and pretrained == "imagenet":
+            try:
+                input_size, std, mean = test_model.input_size, test_model.std, test_model.mean
+                if model_info["input_size"] != input_size :
+                    raise ValueError ("You input wrong input image size for {} imagenet pretrained model setting {}".format(model_name, input_size))
+                if model_info["mean"] != mean :
+                    raise ValueError ("You input wrong mean value for {} imagenet pretrained model setting {}".format(model_name, mean))
+                if model_info["std"] != std :
+                    raise ValueError("You input wrong std value for {} imagenet pretrained model setting {}".format(model_name, std))
+            except:
+                print("Imagenet Pretrain setting for {} not found".format(model_name))
+
+        try:
+            test_model.forward(test_tensor)
+            print("Model {} is successfully registered to spark".format(model_name))
+        except:
+            print ("Model {} cannot process sample tensor. Please check the model setting".format(model_name))
+
+
+        """
         # Adaptation to pretrained models values. (especially you choosed to use "imagenet" pretrained models)
         model_instances = get_instances(test_model)
+
+        test_instances = []
+        for instance in model_instances:
+            test_instances.append(instance)
+        print(test_instances)
+
         if pretrained != None and pretrained == "imagenet":
             if "input_size" in model_instances:
                 if model_info["input_size"] != test_model.input_size:
@@ -102,6 +130,7 @@ class SerializedTrainer():
                 if model_info["std"] != test_model.std:
                     raise ValueError("Std value for normalization {} must be {} if you use {}'s imagenet pretrained model. ".format(
                         model_info["std"], test_model.std, model_name))
+        """
 
         self.models.setdefault(model_name, model_info)   # key : model_name ; value : model_info
         print(self.model_summary(model_info))
@@ -475,8 +504,6 @@ class SerializedTrainer():
         logger.features_to_excel(path_list, features_array, labels_array, logits_save_path)
         logger.logit_to_excel(path_list, logits_array, labels_array, logits_save_path)
 
-
-
         cm = confusion_matrix(predicts_array, labels_array)
         logger.cm_to_excel(cm, self.class_to_idx, logits_save_path)
 
@@ -489,17 +516,26 @@ class SerializedTrainer():
 
             top_list_img = [np.array(Image.open(img).resize((256,256))) for img in top_list]
             bottom_list_img = [np.array(Image.open(img).resize((256,256))) for img in bottom_list]
+            total_img = top_list_img + bottom_list_img
 
             top_list = [logger.path_leaf(file_path) + "\n"+ "prediction : " + str(prob)[:5] for file_path, prob in zip(top_list, top_list_prob )]
-            bottom_list = [logger.path_leaf(file_path) + "prediction : " + str(prob)[:5] for file_path, prob in zip(bottom_list, bottom_list_prob)]
+            bottom_list = [logger.path_leaf(file_path) + "\n" + "prediction : " + str(prob)[:5] for file_path, prob in zip(bottom_list, bottom_list_prob)]
+            total_list = top_list + bottom_list
 
-            logger.gridimages(os.path.join(logits_save_path, "top-5AccImages_{}.png".format(idx)), top_list_img, cols=1, subtitles=top_list, title=idx + "Classification result")
-            logger.gridimages(os.path.join(logits_save_path, "worst-5AccImages_{}.png".format(idx)), bottom_list_img, cols=1, subtitles=bottom_list, title=idx + "Classification result")
-
+            logger.gridimages(os.path.join(logits_save_path, "Validation_result_Images_{}.png".format(idx)), total_img, cols=2, subtitles=total_list, title=idx + "Classification result")
 
         if len(self.class_to_idx) <= 20:
             logger.plot_confusion_matrix(cm, self.class_to_idx, logits_save_path, normalize=True,
                                          title='Normalized confusion matrix')
+
+    def draw_activation_maps(self, model, data_loader, imgs):
+        AM = ActivationMap(model, dim=2)
+        activation_maps =[]
+        transforms = self.transforms
+        for img in imgs:
+            pass
+
+
 
     def sample_top_bottom_data(self, paths, logits, label, sample_num = 5):
         import pandas as pd

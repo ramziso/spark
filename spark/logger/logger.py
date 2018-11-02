@@ -108,6 +108,6 @@ def gridimages(path, images, cols=1, subtitles=None, title=None):
         plt.axis("off")
         plt.imshow(image)
         a.set_title(title)
-    fig.set_size_inches(np.array(fig.get_size_inches()) * n_images/2)
+    fig.set_size_inches(np.array(fig.get_size_inches()) * n_images/6)
     plt.savefig(path)
     plt.close()

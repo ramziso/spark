@@ -5,7 +5,6 @@ def create_model_object(model_info):
         model = model_info["model_constructer"](input_size=model_info["input_size"],
                                                 num_classes=model_info["num_classes"],
                                                 pretrained=model_info["pretrained"])
-
     elif model_info["pretrained"] != None:
         model = model_info["model_constructer"](input_size=model_info["input_size"],
                                                 num_classes=model_info["num_classes"],
