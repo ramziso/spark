@@ -13,6 +13,11 @@ from .analyze import ActivationMap
 import time
 from sklearn.metrics import confusion_matrix
 
+from visdom import Visdom
+def visdom_server():
+    import subprocess
+    visdom_server = subprocess.Popen("visdom")
+
 def get_instances(cls):
     refs = []
     for ref in cls.__refs__[cls]:
@@ -201,6 +206,17 @@ class SerializedTrainer():
                                       ("benchmark_gpu", benchmark_gpu)])
         print("Benchmark Finished. Result is saved at {}/benchmark_result.xlsx".format(self.log_folder))
 
+    def show_augmented_result(self, samples_num = 30):
+        train_transforms = transforms.Compose(self.train_transforms.copy())
+        train_folder = datasets.ImageFolder(self.train_folder[0])
+
+        total_img = []
+        for num in range(samples_num):
+            total_img.append(np.array(train_transforms(train_folder.__getitem__(1)[0])))
+
+        logger.gridimages(os.path.join(self.log_folder, "Augmentation_result.png"), total_img,
+                          cols=5, subtitles=None, title="Data Augmentation result")
+
     def train_model(self, epoch, train_loader, model, loss_func, optimizer):
         model.train()
         train_correct = 0.0
@@ -232,11 +248,13 @@ class SerializedTrainer():
         print("EPOCH [{}] TRAIN RESULT : ACC [{:.5}] LOSS [{:.5}]".format(epoch, train_acc, train_loss))
         return model, train_acc, train_loss
 
-    def __create_dataloader(self, data_folders, data_transforms,  input_size, batch_size, mean, std, shuffle, with_path = False):
+    def __create_dataloader(self, data_folders, data_transforms,  input_size, batch_size, mean, std, shuffle, with_path = False, type = "tensor"):
         final_transforms = transforms.Compose(data_transforms.copy())
-        final_transforms.transforms.append(transforms.Resize((input_size[1], input_size[2])))
-        final_transforms.transforms.append(transforms.ToTensor())
-        final_transforms.transforms.append(transforms.Normalize(mean, std))
+
+        if type == "tensor":
+            final_transforms.transforms.append(transforms.Resize((input_size[1], input_size[2])))
+            final_transforms.transforms.append(transforms.ToTensor())
+            final_transforms.transforms.append(transforms.Normalize(mean, std))
 
         if with_path == False:
             final_folder = [datasets.ImageFolder(folder, final_transforms) for folder in data_folders]
@@ -368,6 +386,7 @@ class SerializedTrainer():
         return model, epoch_train_acc_list, epoch_test_loss_list, epoch_test_acc_list, epoch_test_loss_list
 
     def train_each_models(self):
+        self.show_augmented_result()
         models_information = {}
         results_epoch_train_acc = {}
         results_epoch_test_acc = {}
@@ -397,64 +416,16 @@ class SerializedTrainer():
         logger.plot_graph_save(os.path.join(self.log_folder, "train_loss_comparison.png"),
                                "epoch", "train_loss", "train_loss_comparison", results_epoch_train_loss)
 
-    def draw_activation_maps(self, model, dataset_loader, logits_save_path):
-        """
 
-        :param model:
-        :param dataset_loader:
-        :param logits_save_path:
-        :return:
-        """
-        features_blob = []
-        def get_activation_state(self, input, output):
-            return features_blob.append(output.detach().data.cpu().numpy())
-
-        def returnCAM(feature_conv, weight_softmax, class_idx):
-            # generate the class activation maps upsample to identical to input_img_size
-            size_upsample = (256, 256)
-            bz, nc, h, w = feature_conv.shape
-            output_cam = []
-            for idx in class_idx:
-                cam = weight_softmax[idx].dot(feature_conv.reshape((nc, h*w)))
-                cam = cam.reshape(h, w)
-                cam = cam - np.min(cam)
-                cam_img = cam / np.max(cam)
-                cam_img = np.uint8(255*cam_img)
-                yield cam_img
-
-        # check the model is adapted to Activation maps by checking the second-last layer type.
-        children_list = reversed([children for children in model.children()])
-        for children in children_list:
-            if isinstance(children, torch.nn.modules.pooling.AvgPool2d) or isinstance(children, torch.nn.modules.pooling.AdaptiveAvgPool2d):
-                children.register_forward_hook(get_activation_state)
-                break
-        else:
-            print("model {} architecture cannot draw the activation map.")
-            pass
-
-        # extract all of the prediction from all of the data.
-        # If the dataset containes too many classes,
-        # It selects only 100 classes from entire dataset.
-        model.eval()
-        params = list(model.parameters())
-        weight_softmax = np.sqeeze(params[-2].detach().data.numpy())
-
-        best_img_path , worst_img_path= [[] for x in range(100) ], [[] for x in range(100)]
-
-        logits_array = None
-        labels_array = None
-        path_array = None
-        for path, img, label in dataset_loader:
-            if torch.cuda.is_available():
-                img, label = img.cuda(), label.cuda()
-            img.requires_grad = False
-            label.requires_grad = False
-            batch_logits = model(img)
-
-
-
-            if label.cpu().data[0] >= 100:
-                break
+    def draw_activation_maps(self, imgs, labels, model, activation_map_save_path, input_size=(3,224,224), mean = [0.5, 0.5, 0.5], std = [0.5, 0.5, 0.5]):
+        test_transforms = transforms.Compose(self.test_transforms + [transforms.Resize((input_size[1], input_size[2])),
+                                                                     transforms.ToTensor(),
+                                                                     transforms.Normalize(mean, std)])
+        AM = ActivationMap(model, transforms=test_transforms,  dim=2)
+        activation_maps =[]
+        for img, label, path in imgs:
+            activation_maps.append(AM.draw_activation_map_2d(imgs, labels))
+        logger.gridimages(os.path.join(activation_map_save_path, "activation_map.png"), imgs)
 
     def extract_features_logits(self, model, dataset_loader, logits_save_path):
         init = False
@@ -527,13 +498,6 @@ class SerializedTrainer():
         if len(self.class_to_idx) <= 20:
             logger.plot_confusion_matrix(cm, self.class_to_idx, logits_save_path, normalize=True,
                                          title='Normalized confusion matrix')
-
-    def draw_activation_maps(self, model, data_loader, imgs):
-        AM = ActivationMap(model, dim=2)
-        activation_maps =[]
-        transforms = self.transforms
-        for img in imgs:
-            pass
 
 
 
