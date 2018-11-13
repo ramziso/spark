@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import datasets, transforms, utils
+from torchvision import datasets, transforms
 import os
 from collections import OrderedDict
 import numpy as np
@@ -9,14 +9,18 @@ from .pytorch_tools import model_handler, loss_func_handler, layer_manipulation,
 from .logger import logger
 from .adversarialtraining import VATLoss
 from .analyze import ActivationMap
+from visdom import Visdom
+from .logger.visdom import lineplotstream, plot_images, textstream
 
 import time
 from sklearn.metrics import confusion_matrix
 
-from visdom import Visdom
 def visdom_server():
     import subprocess
-    visdom_server = subprocess.Popen("visdom")
+    from visdom import Visdom
+    visdom_server = subprocess.Popen(["python3","-m", "visdom.server"],
+                                     shell=True, stdout= subprocess.PIPE, preexec_fn=os.setsid)
+    return visdom_server
 
 def get_instances(cls):
     refs = []
@@ -46,8 +50,14 @@ class SerializedTrainer():
         if os.path.exists(self.log_folder) == False:
             os.mkdir(self.log_folder)
 
+        self.use_visdom = use_visdom
+        if use_visdom:
+            visdom_main = Visdom()
+            self.visdom = [visdom_main]
+
         print("spark SerializedTrainer initialized.")
         print(self)
+
 
     def __str__(self):
         return "Classification Serialized Training\n" + \
@@ -202,11 +212,11 @@ class SerializedTrainer():
                 benchmark_gpu.setdefault(model_name, [gpu_inference_avg, gpu_inference_std])
             del test_model, test_tensor
         excel_path = os.path.join(self.log_folder, "benchmark_result.xlsx")
-        logger.log_excel(excel_path, [("benchmark_cpu", benchmark_cpu),
+        logger.save_excel(excel_path, [("benchmark_cpu", benchmark_cpu),
                                       ("benchmark_gpu", benchmark_gpu)])
         print("Benchmark Finished. Result is saved at {}/benchmark_result.xlsx".format(self.log_folder))
 
-    def show_augmented_result(self, samples_num = 30):
+    def augmentation_sample(self, samples_num = 30):
         train_transforms = transforms.Compose(self.train_transforms.copy())
         train_folder = datasets.ImageFolder(self.train_folder[0])
 
@@ -216,6 +226,8 @@ class SerializedTrainer():
 
         logger.gridimages(os.path.join(self.log_folder, "Augmentation_result.png"), total_img,
                           cols=5, subtitles=None, title="Data Augmentation result")
+
+        return total_img
 
     def train_model(self, epoch, train_loader, model, loss_func, optimizer):
         model.train()
@@ -349,15 +361,26 @@ class SerializedTrainer():
         result_excel_log = {"train_acc":epoch_train_acc_list, "train_loss":epoch_train_loss_list ,
                             "test_acc":epoch_test_acc_list, "test_loss": epoch_test_loss_list}
 
-        logger.log_txt(model_txt_path, model.__str__())
-        logger.log_txt(train_environment_path, train_loader.__str__())
-        logger.log_txt(train_environment_path, test_loader.__str__())
-        logger.log_txt(train_environment_path, str(model_info))
+        logger.save_txt(model_txt_path, model.__str__())
+        logger.save_txt(train_environment_path, train_loader.__str__())
+        logger.save_txt(train_environment_path, test_loader.__str__())
+        logger.save_txt(train_environment_path, str(model_info))
 
         best_acc = 0.0
         best_loss = 10000.0
 
-        logger.log_txt(txt_path, "EPOCH, train_acc, train_loss, test_acc, test_loss")
+        logger.save_txt(txt_path, "EPOCH, train_acc, train_loss, test_acc, test_loss")
+
+        if self.use_visdom:
+            model_visdom = Visdom(env=model_name)
+            self.visdom.append(model_visdom)
+            model_visdom.text(model.__str__(), opts=dict(title="model architecture"))
+            train_environment = model_visdom.text(train_loader.__str__(), opts=dict(title="Training setting"))
+            model_visdom.text(test_loader.__str__(), win=train_environment, opts=dict(title="Training setting"), append=True)
+            model_visdom.text(str(model_info), win=train_environment, opts=dict(title="Training setting"), append=True)
+
+            model_acc_graph = lineplotstream(model_visdom, "{} Train Test Accuracy".format(model_name))
+            model_loss_graph = lineplotstream(model_visdom, "{} Train Test Loss".format(model_name))
 
         for epoch in range(1,model_info["max_epoch"]+1):
             torch.set_grad_enabled(True)
@@ -370,9 +393,15 @@ class SerializedTrainer():
             epoch_test_loss_list.append(test_loss)
             text_log = [str(x) for x in [epoch, train_acc, train_loss, test_acc, test_loss]]
             text_log = "\t".join(text_log)
-            logger.log_txt(txt_path, text_log)
-            print(result_excel_log)
-            logger.log_excel(excel_path, [("{}_result".format(model_name), result_excel_log)])
+            logger.save_txt(txt_path, text_log)
+            #print(result_excel_log)
+            logger.save_excel(excel_path, [("{}_result".format(model_name), result_excel_log)])
+
+            if self.use_visdom:
+                model_acc_graph.update([train_acc], [epoch], legend="Train")
+                model_acc_graph.update([test_acc], [epoch], legend="Test")
+                model_loss_graph.update([train_loss], [epoch], legend="Train")
+                model_loss_graph.update([test_acc], [epoch], legend="Test")
 
             model_handler.save_checkpoint(model, os.path.join(model_save_path, "epoch_{}.pth".format(epoch)))
 
@@ -386,12 +415,30 @@ class SerializedTrainer():
         return model, epoch_train_acc_list, epoch_test_loss_list, epoch_test_acc_list, epoch_test_loss_list
 
     def train_each_models(self):
-        self.show_augmented_result()
+        augmentated_result = self.augmentation_sample()
+
+        if self.use_visdom:
+            main_visdom = self.visdom[0]
+            main_visdom.text(str(self), opts=dict(title="Entire training Environment"))
+            plot_images(main_visdom, augmentated_result, option=dict(title="Augmentation exemple"))
+            class_representative = logger.sample_one_image(self.train_folder[0])
+            class_list = sorted(class_representative.keys())
+            img_list = [class_representative[key] for key in class_list]
+            plot_images(main_visdom, img_list, option=dict(title="Each Classes Image", caption=class_list))
+
+
         models_information = {}
         results_epoch_train_acc = {}
         results_epoch_test_acc = {}
         results_epoch_train_loss = {}
         results_epoch_test_loss = {}
+
+        if self.use_visdom:
+            all_train_accuracy_plot = lineplotstream(self.visdom[0], "All Model Train Accuracy")
+            all_train_loss_plot = lineplotstream(self.visdom[0], "All Model Train Loss")
+            all_test_accuracy_plot = lineplotstream(self.visdom[0], "All Model Test Accuracy")
+            all_test_loss_plot = lineplotstream(self.visdom[0], "All Model Test Loss")
+
         for model_name in sorted(self.models.keys()):
             model_info = self.models[model_name]
             model, epoch_train_acc_list, epoch_train_loss_list, epoch_test_acc_list, epoch_test_loss_list = self.train_test_model(model_info)
@@ -401,21 +448,27 @@ class SerializedTrainer():
             results_epoch_test_acc.setdefault(model_name, epoch_test_acc_list)
             results_epoch_test_loss.setdefault(model_name, epoch_test_loss_list)
 
+            # Logging into Visdom if use_visdom
+            if self.use_visdom:
+                all_train_accuracy_plot.update(epoch_train_acc_list, np.arange(1, len(epoch_train_acc_list)+1),
+                                               model_name)
+                all_train_loss_plot.update(epoch_train_loss_list, np.arange(1, len(epoch_train_acc_list) + 1),
+                                               model_name)
+                all_test_accuracy_plot.update(epoch_test_acc_list, np.arange(1, len(epoch_train_acc_list) + 1),
+                                               model_name)
+                all_test_loss_plot.update(epoch_test_loss_list, np.arange(1, len(epoch_train_acc_list) + 1),
+                                               model_name)
+
         # Logging all of the informations to excel and graph.
         excel_path = os.path.join(self.log_folder, "summary.xlsx")
-        logger.log_excel(excel_path, [("test_acc", results_epoch_test_acc),
+        logger.save_excel(excel_path, [("test_acc", results_epoch_test_acc),
                                       ("test_loss", results_epoch_test_loss),
                                       ("train_acc", results_epoch_train_acc),
                                       ("train_loss", results_epoch_train_loss)])
-        logger.plot_graph_save(os.path.join(self.log_folder, "test_acc_comparison.png"),
-                               "epoch", "test_acc", "test_acc_comparison", results_epoch_test_acc)
-        logger.plot_graph_save(os.path.join(self.log_folder, "test_loss_comparison.png"),
-                               "epoch", "test_loss", "test_loss_comparison", results_epoch_test_loss)
-        logger.plot_graph_save(os.path.join(self.log_folder, "train_acc_comparison.png"),
-                               "epoch", "train_acc", "train_acc_comparison", results_epoch_train_acc)
-        logger.plot_graph_save(os.path.join(self.log_folder, "train_loss_comparison.png"),
-                               "epoch", "train_loss", "train_loss_comparison", results_epoch_train_loss)
-
+        logger.save_2D_graph(results_epoch_test_acc, "epoch", "test_acc", "test_acc_comparison", os.path.join(self.log_folder, "test_acc_comparison.png"))
+        logger.save_2D_graph(results_epoch_test_loss, "epoch", "test_loss", "test_loss_comparison", os.path.join(self.log_folder, "test_loss_comparison.png"))
+        logger.save_2D_graph(results_epoch_train_acc, "epoch", "train_acc", "train_acc_comparison", os.path.join(self.log_folder, "train_acc_comparison.png"))
+        logger.save_2D_graph(results_epoch_train_loss, "epoch", "train_loss", "train_loss_comparison", os.path.join(self.log_folder, "train_loss_comparison.png"))
 
     def draw_activation_maps(self, imgs, labels, model, activation_map_save_path, input_size=(3,224,224), mean = [0.5, 0.5, 0.5], std = [0.5, 0.5, 0.5]):
         test_transforms = transforms.Compose(self.test_transforms + [transforms.Resize((input_size[1], input_size[2])),
@@ -509,7 +562,7 @@ class SerializedTrainer():
         all = pd.concat([logits, paths], axis=1)
         for idx in range(len(self.class_to_idx)):
             only_one_class = all.loc[idx, :]
-            only_one_class = only_one_class.sort_values(by = idx, axis= 0, ascending=False)
+            only_one_class = only_one_class.sort_values(by=idx, axis= 0, ascending=False)
             top_n = only_one_class.iloc[:sample_num, -1]
             top_n_prob = only_one_class.iloc[:sample_num, idx]
             bottom_n = only_one_class.iloc[-sample_num:, -1]
@@ -529,8 +582,8 @@ class SerializedTrainer():
     def features_logits_from_each_models(self):
         for model_name in self.models.keys():
             model_info = self.models[model_name]
-            checkpoint_path = os.path.join(self.log_folder, model_info["model_name"], "best_model",
-                                            "best_acc_model.pth")
+            checkpoint_path = os.path.join(self.log_folder, model_info["model_name"],
+                                           "best_model", "best_acc_model.pth")
             model, _ = model_handler.create_model_object(model_info)
             model_handler.load_checkpoint(model, checkpoint_path)
 
@@ -540,13 +593,25 @@ class SerializedTrainer():
             train_logits_save_path = os.path.join(self.log_folder, model_info["model_name"], "logits_train")
             test_logits_save_path = os.path.join(self.log_folder, model_info["model_name"], "logits_test")
 
-            os.makedirs(train_logits_save_path, exist_ok = True)
-            os.makedirs(test_logits_save_path, exist_ok = True)
+            os.makedirs(train_logits_save_path, exist_ok=True)
+            os.makedirs(test_logits_save_path, exist_ok=True)
 
-            train_loader = self.__create_dataloader(self.train_folder, self.test_transforms, model_info["input_size"],
-                                                      model_info["batch_size"], model_info["mean"], model_info["std"], shuffle=False, with_path=True)
-            test_loader = self.__create_dataloader(self.test_folder, self.test_transforms, model_info["input_size"],
-                                                    model_info["batch_size"], model_info["mean"], model_info["std"], shuffle=False, with_path=True)
+            train_loader = self.__create_dataloader(self.train_folder,
+                                                    self.test_transforms,
+                                                    model_info["input_size"],
+                                                    model_info["batch_size"],
+                                                    model_info["mean"],
+                                                    model_info["std"],
+                                                    shuffle=False, with_path=True)
+            test_loader = self.__create_dataloader(self.test_folder,
+                                                   self.test_transforms,
+                                                   model_info["input_size"],
+                                                   model_info["batch_size"],
+                                                   model_info["mean"],
+                                                   model_info["std"],
+                                                   shuffle=False, with_path=True)
 
-            self.extract_features_logits(model, train_loader, logits_save_path=train_logits_save_path)
-            self.extract_features_logits(model, test_loader, logits_save_path=test_logits_save_path)
+            self.extract_features_logits(model, train_loader,
+                                         logits_save_path=train_logits_save_path)
+            self.extract_features_logits(model, test_loader,
+                                         logits_save_path=test_logits_save_path)

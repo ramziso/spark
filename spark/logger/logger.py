@@ -11,22 +11,25 @@ def path_leaf(path):
     head, tail = ntpath.split(path)
     return tail or ntpath.basename(head)
 
-def log_excel(excel_path, args):
+def save_excel(excel_path, args):
+    """
+    logger function to write input data to output excel file.
+    :param excel_path: save excel file path
+    :param args: ( "sheet name", dictionary)
+    :return: None
+    """
     excel_writer = pd.ExcelWriter(excel_path)
 
     for (sheet_name, data) in args:
         result_excel = pd.DataFrame.from_dict(data=data)
         result_excel.to_excel(excel_writer, sheet_name)
 
-def log_txt(txt_path,  *args):
-    try:
-        with codecs.open(txt_path, "a", "utf-8") as log_file:
-            for line in args:
-                log_file.write(line + "\n")
-    except:
-        print("Fail!")
+def save_txt(txt_path,  *args):
+    with codecs.open(txt_path, "a", "utf-8") as log_file:
+        for line in args:
+            log_file.write(line + "\n")
 
-def plot_graph_save(save_path, x_label, y_label, title, dict_data):
+def save_2D_graph(dict_data, x_label, y_label, title, save_path ):
     figure = plt.figure()
     plt.xlabel(x_label)
     plt.ylabel(y_label)
@@ -111,3 +114,18 @@ def gridimages(path, images, cols=1, subtitles=None, title=None):
     fig.set_size_inches(np.array(fig.get_size_inches()) * n_images/6)
     plt.savefig(path)
     plt.close()
+
+def sample_one_image(path, num_max = 10):
+    sample_dict = {}
+    count = 0
+    for root, dirs, files in os.walk(path):
+        if count > num_max:
+            break
+        for dir in dirs:
+            current_dir = os.path.join(root, dir)
+            for _, _, files in os.walk(current_dir):
+                sample_dict.setdefault(dir, os.path.join(current_dir, files[0]))
+                break
+        break
+    return sample_dict
+
