@@ -5,6 +5,7 @@ import itertools
 import pandas as pd
 import codecs
 import ntpath
+from mpl_toolkits.mplot3d import Axes3D
 from ..analyze import ActivationMap, trainable_parameters
 
 def path_leaf(path):
@@ -65,7 +66,7 @@ def plot_confusion_matrix(cm, classes,file_path,
                           normalize=False,
                           title='Confusion matrix',
                           cmap=plt.cm.Blues):
-    if normalize:
+    if normalize :
         cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
 
     plt.imshow(cm, interpolation='nearest', cmap=cmap)
@@ -80,7 +81,7 @@ def plot_confusion_matrix(cm, classes,file_path,
     for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
         plt.text(j, i, format(cm[i, j], fmt),
                  horizontalalignment="center",
-                 color="white" if cm[i, j] > thresh else "black")
+                 color="white" if cm[i, j] >= thresh else "black")
 
     plt.ylabel('True label')
     plt.xlabel('Predicted label')
@@ -129,3 +130,25 @@ def sample_one_image(path, num_max = 10):
         break
     return sample_dict
 
+class PolygonHistogram3D():
+    def __init__(self,x_label, y_label, z_label, title, nbins=100):
+        self.fig = plt.figure()
+        self.ax = self.fig.add_subplot(111, projection="3d")
+        self.nbins = nbins
+        self.stack = 1
+        self.ax.set_xlabel(x_label)
+        self.ax.set_ylabel(y_label)
+        self.ax.set_zlabel(z_label)
+        self.fig.title = title
+
+    def update(self, new_data):
+        hist, bins = np.histogram(new_data, bins = self.nbins)
+        xs = (bins[:-1] + bins[1:])/2
+        self.ax.bar(xs, hist, zs=self.stack , zdir= "y", alpha=0.8)
+        self.stack += 1
+
+    def close(self):
+        plt.close(self.fig)
+
+    def plot(self):
+        return self.fig

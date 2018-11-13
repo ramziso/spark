@@ -19,7 +19,8 @@ def visdom_server():
     import subprocess
     from visdom import Visdom
     visdom_server = subprocess.Popen(["python3","-m", "visdom.server"],
-                                     shell=True, stdout= subprocess.PIPE, preexec_fn=os.setsid)
+                                     shell=True, stdout= subprocess.PIPE,
+                                     preexec_fn=os.setsid)
     return visdom_server
 
 def get_instances(cls):
@@ -31,16 +32,19 @@ def get_instances(cls):
             yield instance
 
 def lists_classes(path):
-    return sorted([x for x in os.listdir(path) if os.path.isdir(os.path.join(path, x))])
+    return sorted([x for x in os.listdir(path)
+                   if os.path.isdir(os.path.join(path, x))])
 
 class SerializedTrainer():
-    def __init__(self, train_folder, test_folder, log_folder, train_transforms = [],
-                 test_transforms = [], dataloader_worker = 0, cuda_devices = 0, use_visdom = False):
+    def __init__(self, train_folder, test_folder, log_folder,
+                 train_transforms = [], test_transforms = [],
+                 dataloader_worker = 0, cuda_devices = 0, use_visdom = False):
         self.models = {}
         self.log_folder = log_folder
         self.train_folder = [train_folder]
         self.test_folder = [test_folder]
-        self.num_classes = len([folder for folder in os.listdir(train_folder) if os.path.isdir(os.path.join(train_folder, folder))])
+        self.num_classes = len([folder for folder in os.listdir(train_folder)
+                                if os.path.isdir(os.path.join(train_folder, folder))])
         self.train_transforms  = train_transforms
         self.test_transforms = test_transforms
         self.dataloader_worker = dataloader_worker
@@ -78,8 +82,8 @@ class SerializedTrainer():
         return "\n\t".join([ "(" + info + ")" + " : "+ str(model_info[info]) for info in print_row])
 
     def add_model(self, model_name, model_object=None, input_size = None, pretrained = None,
-                  train_last_layer = False, max_epoch = 50, batch_size = 16, lr = 0.001, optimizer = "Adam", loss_func = "CrossEntropyLoss",
-                  learning_scheduler = None,
+                  train_last_layer = False, max_epoch = 50, batch_size = 16, lr = 0.001,
+                  optimizer = "Adam", loss_func = "CrossEntropyLoss", learning_scheduler = None,
                   mean = [0.5,0.5,0.5], std = [0.5, 0.5, 0.5]):
         # Add model registered in pretrained models.
         # Pytorch model object is not defined in this case.
@@ -108,19 +112,24 @@ class SerializedTrainer():
             try:
                 input_size, std, mean = test_model.input_size, test_model.std, test_model.mean
                 if model_info["input_size"] != input_size :
-                    raise ValueError ("You input wrong input image size for {} imagenet pretrained model setting {}".format(model_name, input_size))
+                    raise ValueError ("You input wrong input image size for"
+                                      " {} imagenet pretrained model setting {}".format(model_name, input_size))
                 if model_info["mean"] != mean :
-                    raise ValueError ("You input wrong mean value for {} imagenet pretrained model setting {}".format(model_name, mean))
+                    raise ValueError ("You input wrong mean value for"
+                                      " {} imagenet pretrained model setting {}".format(model_name, mean))
                 if model_info["std"] != std :
-                    raise ValueError("You input wrong std value for {} imagenet pretrained model setting {}".format(model_name, std))
+                    raise ValueError("You input wrong std value for"
+                                     " {} imagenet pretrained model setting {}".format(model_name, std))
             except:
                 print("Imagenet Pretrain setting for {} not found".format(model_name))
 
         try:
             test_model.forward(test_tensor)
-            print("Model {} is successfully registered to spark".format(model_name))
+            print("Model {} is successfully "
+                  "registered to spark".format(model_name))
         except:
-            print ("Model {} cannot process sample tensor. Please check the model setting".format(model_name))
+            print ("Model {} cannot process sample tensor. "
+                   "Please check the model setting".format(model_name))
 
 
         """
@@ -151,22 +160,32 @@ class SerializedTrainer():
         print(self.model_summary(model_info))
 
     def add_train_folder(self, path):
-        if self.num_classes != len([folder for folder in os.listdir(path) if os.path.isdir(os.path.join(path, folder))]):
-            raise ValueError("{} contains different number of class to former registered train dataset {}".format(path, self.train_folder))
+        train_class_list = [folder for folder in os.listdir(path)
+                            if os.path.isdir(os.path.join(path, folder))]
+        if self.num_classes != len(train_class_list):
+            raise ValueError("{} contains different number of "
+                             "class to former registered train dataset "
+                             "{}".format(path, self.train_folder))
         else:
             self.train_folder.append(path)
             print
 
     def add_test_folder(self, path):
-        if self.num_classes != len([folder for folder in os.listdir(path) if os.path.isdir(os.path.join(path, folder))]):
-            raise ValueError("{} contains different number of class to former registered test dataset {}".format(path, self.test_folder))
+
+        if self.num_classes != len([folder for folder in os.listdir(path)
+                                    if os.path.isdir(os.path.join(path, folder))]):
+            raise ValueError("{} contains different number of class"
+                             " to former registered test dataset "
+                             "{}".format(path, self.test_folder))
         else:
             self.test_folder.append(path)
 
     def add_train_transform(self, target_transforms):
         if type(target_transforms) != tuple or type(target_transforms) != list:
             if type(target_transforms) != transforms:
-                raise ValueError("target_transforms {} is not torchvision transformation object".format(target_transforms))
+                raise ValueError("target_transforms {} is not "
+                                 "torchvision transformation "
+                                 "object".format(target_transforms))
             self.train_transforms.append(target_transforms)
         else:
             for target_transform in target_transforms:
@@ -175,7 +194,8 @@ class SerializedTrainer():
     def add_test_transform(self, target_transforms):
         if type(target_transforms) != tuple or type(target_transforms) != list:
             if type(target_transforms) != transforms:
-                raise ValueError("target_transforms {} is not torchvision transformation object".format(target_transforms))
+                raise ValueError("target_transforms {} is not torchvision "
+                                 "transformation object".format(target_transforms))
             self.test_transforms.append(target_transforms)
         else:
             for target_transform in target_transforms:
@@ -202,19 +222,22 @@ class SerializedTrainer():
             input_size = model_info["input_size"]
             test_tensor = torch.randn((1, input_size[0], input_size[1], input_size[2]))
             inference_avg, inference_std = self.benchmark_model(test_model, test_tensor)
-            print("{} CPU benchmark result : {:.3}+-{:.3}".format(model_name, inference_avg, inference_std))
+            print("{} CPU benchmark result : {:.3}+-{:.3}".format(model_name,
+                                                                  inference_avg, inference_std))
             benchmark_cpu.setdefault(model_name, [inference_avg, inference_std])
             if torch.cuda.is_available():
                 test_model = test_model.cuda()
                 test_tensor = test_tensor.cuda()
                 gpu_inference_avg, gpu_inference_std = self.benchmark_model(test_model, test_tensor)
-                print("{} GPU benchmark result : {:.3}+-{:.3}".format(model_name, gpu_inference_avg, gpu_inference_std))
+                print("{} GPU benchmark result : {:.3}+-{:.3}".format(model_name,
+                                                                      gpu_inference_avg, gpu_inference_std))
                 benchmark_gpu.setdefault(model_name, [gpu_inference_avg, gpu_inference_std])
             del test_model, test_tensor
         excel_path = os.path.join(self.log_folder, "benchmark_result.xlsx")
         logger.save_excel(excel_path, [("benchmark_cpu", benchmark_cpu),
                                       ("benchmark_gpu", benchmark_gpu)])
-        print("Benchmark Finished. Result is saved at {}/benchmark_result.xlsx".format(self.log_folder))
+        print("Benchmark Finished. Result is saved at "
+              "{}/benchmark_result.xlsx".format(self.log_folder))
 
     def augmentation_sample(self, samples_num = 30):
         train_transforms = transforms.Compose(self.train_transforms.copy())
@@ -260,7 +283,8 @@ class SerializedTrainer():
         print("EPOCH [{}] TRAIN RESULT : ACC [{:.5}] LOSS [{:.5}]".format(epoch, train_acc, train_loss))
         return model, train_acc, train_loss
 
-    def __create_dataloader(self, data_folders, data_transforms,  input_size, batch_size, mean, std, shuffle, with_path = False, type = "tensor"):
+    def __create_dataloader(self, data_folders, data_transforms,  input_size,
+                            batch_size, mean, std, shuffle, with_path = False, type = "tensor"):
         final_transforms = transforms.Compose(data_transforms.copy())
 
         if type == "tensor":
@@ -367,7 +391,7 @@ class SerializedTrainer():
         logger.save_txt(train_environment_path, str(model_info))
 
         best_acc = 0.0
-        best_loss = 10000.0
+        best_loss = 100000.0
 
         logger.save_txt(txt_path, "EPOCH, train_acc, train_loss, test_acc, test_loss")
 
@@ -376,11 +400,16 @@ class SerializedTrainer():
             self.visdom.append(model_visdom)
             model_visdom.text(model.__str__(), opts=dict(title="model architecture"))
             train_environment = model_visdom.text(train_loader.__str__(), opts=dict(title="Training setting"))
-            model_visdom.text(test_loader.__str__(), win=train_environment, opts=dict(title="Training setting"), append=True)
-            model_visdom.text(str(model_info), win=train_environment, opts=dict(title="Training setting"), append=True)
+            model_visdom.text(test_loader.__str__(), win=train_environment,
+                              opts=dict(title="Training setting"), append=True)
+            model_visdom.text(str(model_info), win=train_environment,
+                              opts=dict(title="Training setting"), append=True)
 
             model_acc_graph = lineplotstream(model_visdom, "{} Train Test Accuracy".format(model_name))
             model_loss_graph = lineplotstream(model_visdom, "{} Train Test Loss".format(model_name))
+
+            weight_change = logger.PolygonHistogram3D("Weight", "Epoch", "Number of Count", "Weight Histogram")
+            weight_change_plot = model_visdom.matplot(weight_change.plot())
 
         for epoch in range(1,model_info["max_epoch"]+1):
             torch.set_grad_enabled(True)
@@ -402,14 +431,24 @@ class SerializedTrainer():
                 model_acc_graph.update([test_acc], [epoch], legend="Test")
                 model_loss_graph.update([train_loss], [epoch], legend="Train")
                 model_loss_graph.update([test_acc], [epoch], legend="Test")
+                weights = logger.trainable_parameters(model)
+                print(weights)
+                weights = [weight.detach().numpy().reshape(-1) for weight in weights]
+                weights = np.concatenate(weights)
+                print(weights)
+                weight_change.update(weights)
+                model_visdom.matplot(weight_change.plot(), win = weight_change_plot)
 
-            model_handler.save_checkpoint(model, os.path.join(model_save_path, "epoch_{}.pth".format(epoch)))
+            model_handler.save_checkpoint(model, os.path.join(model_save_path,
+                                                              "epoch_{}.pth".format(epoch)))
 
             if best_acc < test_acc:
-                model_handler.save_checkpoint(model, os.path.join(best_model_save_path, "best_acc_model.pth".format(epoch)))
+                model_handler.save_checkpoint(model, os.path.join(best_model_save_path,
+                                                                  "best_acc_model.pth".format(epoch)))
                 best_acc = test_acc
             if best_loss > test_loss:
-                model_handler.save_checkpoint(model, os.path.join(best_model_save_path, "best_loss_model.pth".format(epoch)))
+                model_handler.save_checkpoint(model, os.path.join(best_model_save_path,
+                                                                  "best_loss_model.pth".format(epoch)))
                 best_loss = test_loss
 
         return model, epoch_train_acc_list, epoch_test_loss_list, epoch_test_acc_list, epoch_test_loss_list
@@ -441,7 +480,8 @@ class SerializedTrainer():
 
         for model_name in sorted(self.models.keys()):
             model_info = self.models[model_name]
-            model, epoch_train_acc_list, epoch_train_loss_list, epoch_test_acc_list, epoch_test_loss_list = self.train_test_model(model_info)
+            train_result = self.train_test_model(model_info)
+            model, epoch_train_acc_list, epoch_train_loss_list, epoch_test_acc_list, epoch_test_loss_list = train_result
             models_information.setdefault(model_name, model_info)
             results_epoch_train_acc.setdefault(model_name, epoch_train_acc_list)
             results_epoch_train_loss.setdefault(model_name, epoch_train_loss_list)
@@ -465,12 +505,17 @@ class SerializedTrainer():
                                       ("test_loss", results_epoch_test_loss),
                                       ("train_acc", results_epoch_train_acc),
                                       ("train_loss", results_epoch_train_loss)])
-        logger.save_2D_graph(results_epoch_test_acc, "epoch", "test_acc", "test_acc_comparison", os.path.join(self.log_folder, "test_acc_comparison.png"))
-        logger.save_2D_graph(results_epoch_test_loss, "epoch", "test_loss", "test_loss_comparison", os.path.join(self.log_folder, "test_loss_comparison.png"))
-        logger.save_2D_graph(results_epoch_train_acc, "epoch", "train_acc", "train_acc_comparison", os.path.join(self.log_folder, "train_acc_comparison.png"))
-        logger.save_2D_graph(results_epoch_train_loss, "epoch", "train_loss", "train_loss_comparison", os.path.join(self.log_folder, "train_loss_comparison.png"))
+        logger.save_2D_graph(results_epoch_test_acc, "epoch", "test_acc", "test_acc_comparison",
+                             os.path.join(self.log_folder, "test_acc_comparison.png"))
+        logger.save_2D_graph(results_epoch_test_loss, "epoch", "test_loss", "test_loss_comparison",
+                             os.path.join(self.log_folder, "test_loss_comparison.png"))
+        logger.save_2D_graph(results_epoch_train_acc, "epoch", "train_acc", "train_acc_comparison",
+                             os.path.join(self.log_folder, "train_acc_comparison.png"))
+        logger.save_2D_graph(results_epoch_train_loss, "epoch", "train_loss", "train_loss_comparison",
+                             os.path.join(self.log_folder, "train_loss_comparison.png"))
 
-    def draw_activation_maps(self, imgs, labels, model, activation_map_save_path, input_size=(3,224,224), mean = [0.5, 0.5, 0.5], std = [0.5, 0.5, 0.5]):
+    def draw_activation_maps(self, imgs, labels, model, activation_map_save_path,
+                             input_size=(3,224,224), mean = [0.5, 0.5, 0.5], std = [0.5, 0.5, 0.5]):
         test_transforms = transforms.Compose(self.test_transforms + [transforms.Resize((input_size[1], input_size[2])),
                                                                      transforms.ToTensor(),
                                                                      transforms.Normalize(mean, std)])
@@ -490,6 +535,7 @@ class SerializedTrainer():
         path_list = []
 
         for img, label, path in dataset_loader:
+
             if torch.cuda.is_available():
                 img, label = img.cuda(), label.cuda()
             img.requires_grad = False
@@ -527,14 +573,14 @@ class SerializedTrainer():
 
         logger.features_to_excel(path_list, features_array, labels_array, logits_save_path)
         logger.logit_to_excel(path_list, logits_array, labels_array, logits_save_path)
-
         cm = confusion_matrix(predicts_array, labels_array)
         logger.cm_to_excel(cm, self.class_to_idx, logits_save_path)
 
         # List up the top 5 and top 5 images that most good top1 prediction and worst 5 prediction on every classes.
         # If the Classes number is too many, It will ignore the above 10th classes.
-        for idx, top_list, bottom_list, top_list_prob, bottom_list_prob in self.sample_top_bottom_data(path_list, probs_array, labels_array):
+        for top_and_bottom_list in self.sample_top_bottom_data(path_list, probs_array, labels_array):
             from PIL import Image
+            idx, top_list, bottom_list, top_list_prob, bottom_list_prob = top_and_bottom_list
             #top_list = utils.make_grid(top_list, nrow=len(top_list))
             #bottom_list = utils.make_grid(bottom_list, nrow=len(bottom_list))
 
@@ -546,7 +592,8 @@ class SerializedTrainer():
             bottom_list = [logger.path_leaf(file_path) + "\n" + "prediction : " + str(prob)[:5] for file_path, prob in zip(bottom_list, bottom_list_prob)]
             total_list = top_list + bottom_list
 
-            logger.gridimages(os.path.join(logits_save_path, "Validation_result_Images_{}.png".format(idx)), total_img, cols=2, subtitles=total_list, title=idx + "Classification result")
+            logger.gridimages(os.path.join(logits_save_path, "Validation_result_Images_{}.png".format(idx)),
+                              total_img, cols=2, subtitles=total_list, title=idx + " Classification result")
 
         if len(self.class_to_idx) <= 20:
             logger.plot_confusion_matrix(cm, self.class_to_idx, logits_save_path, normalize=True,
@@ -554,13 +601,18 @@ class SerializedTrainer():
 
 
 
-    def sample_top_bottom_data(self, paths, logits, label, sample_num = 5):
+    def sample_top_bottom_data(self, paths, logits, label, sample_num = 5, sample_class = 5):
         import pandas as pd
         paths = pd.DataFrame(paths, index= label.reshape(1,-1)[0].tolist(), columns=["file_path"])
         logits = pd.DataFrame(logits, index= label.reshape(1,-1)[0].tolist(),
                                     columns=[x for x in range(logits.shape[1])])
         all = pd.concat([logits, paths], axis=1)
+
+        count = 0
         for idx in range(len(self.class_to_idx)):
+            if count >= 5:
+                break
+            count += 1
             only_one_class = all.loc[idx, :]
             only_one_class = only_one_class.sort_values(by=idx, axis= 0, ascending=False)
             top_n = only_one_class.iloc[:sample_num, -1]
@@ -573,8 +625,8 @@ class SerializedTrainer():
         # Draw Weight Histogram on Model
         for model_name in self.models.keys():
             model_info = self.models[model_name]
-            checkpoint_path = os.path.join(self.log_folder, model_info["model_name"], "best_model",
-                                           "best_acc_model.pth")
+            checkpoint_path = os.path.join(self.log_folder, model_info["model_name"],
+                                           "best_model", "best_acc_model.pth")
             model, _ = model_handler.create_model_object(model_info)
             model_handler.load_checkpoint(model, checkpoint_path)
             logger.draw_weight_histogram(model, os.path.join(self.log_folder, model_info["model_name"]))
@@ -584,14 +636,17 @@ class SerializedTrainer():
             model_info = self.models[model_name]
             checkpoint_path = os.path.join(self.log_folder, model_info["model_name"],
                                            "best_model", "best_acc_model.pth")
+
             model, _ = model_handler.create_model_object(model_info)
             model_handler.load_checkpoint(model, checkpoint_path)
 
             model = self.model_cuda_selecter(model)
             model.eval()
 
-            train_logits_save_path = os.path.join(self.log_folder, model_info["model_name"], "logits_train")
-            test_logits_save_path = os.path.join(self.log_folder, model_info["model_name"], "logits_test")
+            train_logits_save_path = os.path.join(self.log_folder,
+                                                  model_info["model_name"], "logits_train")
+            test_logits_save_path = os.path.join(self.log_folder,
+                                                 model_info["model_name"], "logits_test")
 
             os.makedirs(train_logits_save_path, exist_ok=True)
             os.makedirs(test_logits_save_path, exist_ok=True)
