@@ -11,17 +11,9 @@ from .adversarialtraining import VATLoss
 from .analyze import ActivationMap
 from visdom import Visdom
 from .logger.visdom import lineplotstream, plot_images, textstream
-
 import time
 from sklearn.metrics import confusion_matrix
 
-def visdom_server():
-    import subprocess
-    from visdom import Visdom
-    visdom_server = subprocess.Popen(["python3","-m", "visdom.server"],
-                                     shell=True, stdout= subprocess.PIPE,
-                                     preexec_fn=os.setsid)
-    return visdom_server
 
 def get_instances(cls):
     refs = []
@@ -83,8 +75,8 @@ class SerializedTrainer():
 
     def add_model(self, model_name, model_object=None, input_size = None, pretrained = None,
                   train_last_layer = False, max_epoch = 50, batch_size = 16, lr = 0.001,
-                  optimizer = "Adam", loss_func = "CrossEntropyLoss", learning_scheduler = None,
-                  mean = [0.5,0.5,0.5], std = [0.5, 0.5, 0.5]):
+                  optimizer = "Adam", optimizer_setting = {}, loss_func = "CrossEntropyLoss", loss_setting={},learning_scheduler = None,
+                  learning_scheduler_setting = {}, mean = [0.5,0.5,0.5], std = [0.5, 0.5, 0.5]):
         # Add model registered in pretrained models.
         # Pytorch model object is not defined in this case.
         model_info = OrderedDict({})
@@ -97,8 +89,11 @@ class SerializedTrainer():
         model_info.setdefault("batch_size", batch_size)
         model_info.setdefault("lr", lr)
         model_info.setdefault("learning_scheduler", learning_scheduler)
+        model_info.setdefault("learning_scheduler_setting", learning_scheduler_setting)
         model_info.setdefault("optimizer", optimizer)
+        model_info.setdefault("optimizer_setting", optimizer_setting)
         model_info.setdefault("loss_func", loss_func)
+        model_info.setdefault("lf_setting", loss_setting)
         model_info.setdefault("mean", mean)
         model_info.setdefault("std", std)
         model_info.setdefault("num_classes", self.num_classes)
@@ -359,9 +354,14 @@ class SerializedTrainer():
                                              model_info["input_size"], model_info["batch_size"],
                                              model_info["mean"], model_info["std"], False)
 
-        loss_func = loss_func_handler.create_loss_func(loss_func_name=model_info["loss_func"])
+        loss_func = loss_func_handler.create_loss_func(loss_func_name=model_info["loss_func"],
+                                                       **model_info["lf_setting"])
         optimizer = optimizer_handler.create_optimizer(model, learning_rate=model_info["lr"],
-                                                       optimizer_name=model_info["optimizer"])
+                                                       optimizer_name=model_info["optimizer"],
+                                                       **model_info["optimizer_setting"])
+        print(model_info["learning_scheduler_setting"])
+        scheduler = scheduler_handler.create_train_scheduler(optimizer, model_info["learning_scheduler"],
+                                          **model_info["learning_scheduler_setting"])
 
         epoch_train_acc_list, epoch_train_loss_list = [], []
         epoch_test_acc_list, epoch_test_loss_list = [], []
@@ -395,6 +395,8 @@ class SerializedTrainer():
 
         logger.save_txt(txt_path, "EPOCH, train_acc, train_loss, test_acc, test_loss")
 
+        # Visdom logging session
+
         if self.use_visdom:
             model_visdom = Visdom(env=model_name)
             self.visdom.append(model_visdom)
@@ -411,9 +413,13 @@ class SerializedTrainer():
             weight_change = logger.PolygonHistogram3D("Weight", "Epoch", "Number of Count", "Weight Histogram")
             weight_change_plot = model_visdom.matplot(weight_change.plot())
 
+        # Train, test model
+
         for epoch in range(1,model_info["max_epoch"]+1):
             torch.set_grad_enabled(True)
             model, train_acc, train_loss = self.train_model(epoch, train_loader, model, loss_func, optimizer)
+            scheduler.step()
+
             torch.set_grad_enabled(False)
             test_acc, test_loss = self.test_model(epoch, test_loader, model, loss_func)
             epoch_train_acc_list.append(train_acc)
@@ -598,7 +604,6 @@ class SerializedTrainer():
         if len(self.class_to_idx) <= 20:
             logger.plot_confusion_matrix(cm, self.class_to_idx, logits_save_path, normalize=True,
                                          title='Normalized confusion matrix')
-
 
 
     def sample_top_bottom_data(self, paths, logits, label, sample_num = 5, sample_class = 5):
